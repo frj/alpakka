@@ -4,7 +4,7 @@
 package akka.stream.alpakka.ftp
 
 import java.io.File
-import java.net.InetAddress
+import java.net.{InetAddress, SocketException}
 import java.nio.file.{Files, Paths}
 
 import akka.stream.IOResult
@@ -17,6 +17,7 @@ import org.scalatest.Ignore
 import scala.concurrent.duration._
 import scala.util.Random
 import java.nio.file.attribute.PosixFilePermission
+import org.scalatest.concurrent.Eventually
 
 final class FtpStageSpec extends BaseFtpSpec with CommonFtpStageSpec
 /* Disabled until we fix https://github.com/akka/alpakka/issues/365 */
@@ -67,7 +68,7 @@ final class StrictHostCheckingSftpSourceSpec extends BaseSftpSpec with CommonFtp
   )
 }
 
-trait CommonFtpStageSpec extends BaseSpec {
+trait CommonFtpStageSpec extends BaseSpec with Eventually {
 
   implicit val system = getSystem
   implicit val mat = getMaterializer
@@ -246,6 +247,23 @@ trait CommonFtpStageSpec extends BaseSpec {
       val result = brokenSource.runWith(storeToPath(s"/$fileName", append = false)).futureValue
 
       result.status.failed.get shouldBe a[ArithmeticException]
+    }
+
+    "fail and report the exception in the result status" in {
+      val fileName = "sample_io"
+      val infinate = Source.repeat(ByteString(0x00))
+
+      val future = infinate.runWith(storeToPath(s"/$fileName", append = false))
+
+      eventually {
+        noException should be thrownBy getFtpFileContents(FtpBaseSupport.FTP_ROOT_DIR, fileName)
+        getFtpFileContents(FtpBaseSupport.FTP_ROOT_DIR, fileName).length shouldBe > (0)
+      }
+
+      stopServer()
+      val result = future.futureValue
+      startServer()
+      result.status.failed.get shouldBe a[SocketException]
     }
   }
 
